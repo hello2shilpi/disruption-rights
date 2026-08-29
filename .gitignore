@@ -1,0 +1,33 @@
+# ── secrets — never commit these ─────────────────────────────
+.env
+*.key
+secrets.*
+
+# ── the downloaded corpus ────────────────────────────────────
+# Regenerate with: python corpus/fetch_corpus.py --with-superseded
+# Kept out of git so the repo stays small and nobody edits a
+# downloaded regulation by hand.
+corpus/md/
+corpus/pdf/
+
+# ── vector store, caches, run output ─────────────────────────
+.chroma/
+chroma_db/
+runs/
+*.jsonl.bak
+
+# ── python ───────────────────────────────────────────────────
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ── editors and OS ───────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
