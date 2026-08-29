@@ -75,7 +75,7 @@ sources don't support a view, say so and keep `confidence` at or below 0.5.
 ```
 golden/golden.jsonl               the frozen cases
 corpus/MANIFEST.md                what the corpus is and why
-corpus/fetch_corpus.py            downloads 30 CFR sections from eCFR
+corpus/fetch_corpus.py            downloads 31 CFR sections from eCFR
 corpus/md/                        the downloaded documents (not committed)
 eval.py                           the harness
 FACTCHECK.md                      regulation figures verified against eCFR
