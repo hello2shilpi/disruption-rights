@@ -13,14 +13,14 @@ repo runs it and gets the same corpus, dated.
 
 ---
 
-## What the script downloads — 30 documents
+## What the script downloads — 31 documents
 
 | Part | What it governs | Docs |
 |---|---|---|
 | **14 CFR 250** | Oversales and denied boarding. The only place in US law with a compensation *formula* — and § 250.6, the exceptions that switch it off. | 10 |
 | **14 CFR 254** | Baggage liability limit. | 1 |
 | **14 CFR 259** | Tarmac delays, customer service plans, notifications. Service obligations with **no money attached** — the clearest source of "you're not owed anything" findings in the corpus. | 7 |
-| **14 CFR 260** | The 2024 automatic refund rule. Definitions in § 260.2, the obligation in § 260.6 — deliberately far apart. | 10 |
+| **14 CFR 260** | The 2024 automatic refund rule. Definitions in § 260.2, the obligation in § 260.6 — deliberately far apart. | 11 |
 | **superseded** | § 250.5 and § 254.4 as they stood on 2024-01-01, before the October 2024 inflation adjustment. Different dollar figures, near-identical prose. | 2 |
 
 Every file carries front-matter:
@@ -82,7 +82,7 @@ A corpus worth grading has four traps in it naturally. This one does:
 
 ## Left out on purpose
 
-**More than ~37 documents.** Ingestion isn't the project. This is enough for chunking to
+**More than ~38 documents.** Ingestion isn't the project. This is enough for chunking to
 actually split and for citation scoring to be earned.
 
 **State law and small-claims material.** Pulls the agent toward legal advice, which is a refusal
