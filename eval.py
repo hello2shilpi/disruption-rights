@@ -3,7 +3,7 @@
     python eval.py --list       what's in the golden set
     python eval.py              run every case and score it
 
-
+Owner: Shilpi
 
 Reads golden/golden.jsonl. Each case looks like this:
 
