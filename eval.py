@@ -3,7 +3,6 @@
     python eval.py --list       what's in the golden set
     python eval.py              run every case and score it
 
-Owner: Shilpi
 
 Reads golden/golden.jsonl. The code uses the same field names as the file, so
 what you see in the debugger is what's on disk:
