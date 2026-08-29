@@ -15,7 +15,6 @@ saying yes reads as helpful and nobody grades it. This one is graded on saying n
 | | |
 |---|---|
 | Golden set | `golden/golden.jsonl` — frozen before the system produced anything |
-| Candidates | `golden/candidates-shilpi.jsonl` — extra cases offered into the merge, not scored |
 | Corpus | 30 CFR sections, downloaded by script — see `corpus/MANIFEST.md` |
 | Harness | `eval.py` — runs the cases, prints the score |
 | Agent | in progress |
@@ -75,7 +74,6 @@ sources don't support a view, say so and keep `confidence` at or below 0.5.
 
 ```
 golden/golden.jsonl               the frozen cases
-golden/candidates-shilpi.jsonl    extra candidates, not scored
 corpus/MANIFEST.md                what the corpus is and why
 corpus/fetch_corpus.py            downloads 30 CFR sections from eCFR
 corpus/md/                        the downloaded documents (not committed)
