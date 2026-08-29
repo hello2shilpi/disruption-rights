@@ -15,6 +15,7 @@ No key, no rate limit published - be polite anyway.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import time
@@ -81,18 +82,16 @@ SUPERSEDED = [
 ]
 
 
-def fetch(date: str, part: str, section: str, tries: int = 3) -> str:
-    url = API.format(date=date, part=part, section=section)
+def get(url: str, tries: int = 3) -> bytes:
+    """One HTTP GET, with a couple of retries on anything but a 404."""
     for attempt in range(tries):
         try:
             req = urllib.request.Request(
                 url, headers={"User-Agent": "disruption-rights-corpus/1.0 (coursework)"})
             with urllib.request.urlopen(req, timeout=60) as r:
-                return r.read().decode("utf-8")
+                return r.read()
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                raise
-            if attempt == tries - 1:
+            if e.code == 404 or attempt == tries - 1:
                 raise
             time.sleep(2 ** attempt)
         except urllib.error.URLError:
@@ -100,6 +99,26 @@ def fetch(date: str, part: str, section: str, tries: int = 3) -> str:
                 raise
             time.sleep(2 ** attempt)
     raise RuntimeError("unreachable")
+
+
+def latest_issue_date() -> str:
+    """Ask eCFR which date it actually has data for.
+
+    The versioner serves a point in time, and asking for a date later than the
+    most recent published issue returns 404 on every section. Today's date is
+    therefore the wrong default - use the date eCFR reports.
+    """
+    data = json.loads(get("https://www.ecfr.gov/api/versioner/v1/titles.json"))
+    for t in data.get("titles", []):
+        if t.get("number") == 14:
+            d = t.get("latest_issue_date") or t.get("up_to_date_as_of")
+            if d:
+                return d[:10]
+    raise SystemExit("Could not read the latest issue date for Title 14 from eCFR.")
+
+
+def fetch(date: str, part: str, section: str) -> str:
+    return get(API.format(date=date, part=part, section=section)).decode("utf-8")
 
 
 def to_text(xml: str) -> str:
@@ -138,21 +157,27 @@ def write_doc(part: str, section: str, title: str, date: str,
         "---",
         "",
     ])
-    path.write_text(front + f"# 14 CFR {section} - {title}\n\n" + body + "\n")
+    path.write_text(front + f"# 14 CFR {section} - {title}\n\n" + body + "\n",
+                    encoding="utf-8")
     return path
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--date", default="current",
-                    help="YYYY-MM-DD point in time, or 'current' (default)")
+                    help="YYYY-MM-DD point in time, or 'current' (default: ask "
+                         "eCFR for its most recent issue date)")
     ap.add_argument("--with-superseded", action="store_true",
                     help=f"also fetch the {SUPERSEDED_DATE} editions of the "
                          "sections the golden set uses as version traps")
     args = ap.parse_args()
 
     OUT.mkdir(parents=True, exist_ok=True)
-    date = time.strftime("%Y-%m-%d") if args.date == "current" else args.date
+    if args.date == "current":
+        date = latest_issue_date()
+        print(f"eCFR's most recent issue of Title 14 is {date} - using that.\n")
+    else:
+        date = args.date
 
     jobs = [(p, s, t, date, False) for p, s, t in CURRENT]
     if args.with_superseded:
