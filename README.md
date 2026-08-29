@@ -15,7 +15,7 @@ saying yes reads as helpful and nobody grades it. This one is graded on saying n
 | | |
 |---|---|
 | Golden set | `golden/golden.jsonl` — frozen before the system produced anything |
-| Corpus | 30 CFR sections, downloaded by script — see `corpus/MANIFEST.md` |
+| Corpus | 31 CFR sections, downloaded by script — see `corpus/MANIFEST.md` |
 | Harness | `eval.py` — runs the cases, prints the score |
 | Agent | in progress |
 
