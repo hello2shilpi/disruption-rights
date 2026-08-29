@@ -1,72 +1,66 @@
-# Pre-freeze fact-check
+# Verified figures
 
-Every regulatory claim in `golden.jsonl` was checked against eCFR primary text on
-**2026-08-25**, before the set was frozen. Six cases were wrong and were corrected. This file
-is the record — it is what makes the freeze mean something, and it is worth keeping in the
-repo for the same reason the failing cases stay in the report.
+Every number below was read from the actual regulation text on **ecfr.gov**, on **25 August
+2026**. Use these to check any case in either file — a case whose expected answer contradicts
+one of these is wrong, whoever wrote it.
 
-## What was wrong
+| Figure | What it is | Section | Check it |
+|---|---|---|---|
+| **$1,075 / $2,150** | Bumping compensation caps — 200% band and 400% band. A **ceiling**, not the payout. | 14 CFR 250.5 | [open](https://www.ecfr.gov/current/title-14/chapter-II/subchapter-A/part-250/section-250.5) · search `2,150` |
+| **$4,700** | Baggage liability minimum per passenger. A **floor on liability**, not a payment — you prove your loss. | 14 CFR 254.4 | [open](https://www.ecfr.gov/current/title-14/chapter-II/subchapter-A/part-254/section-254.4) · search `4,700` |
+| **3 hours** | Tarmac: they must let you off. Also the domestic delay that triggers a refund right. | 14 CFR 259.4 · 260.2 | [open](https://www.ecfr.gov/current/title-14/chapter-II/subchapter-A/part-259/section-259.4) · search `three hours` |
+| **2 hours** | Tarmac: food and water due, whether or not you're let off. | 14 CFR 259.4 | same page · search `two hours` |
+| **6 hours** | International delay that triggers a refund right. Measured on **arrival**, not departure. | 14 CFR 260.2 | [open](https://www.ecfr.gov/current/title-14/chapter-II/subchapter-A/part-260/section-260.2) · search `six` |
+| **7 business days** | Refund deadline, credit card. | 14 CFR 260.2 | same page · search `business days` |
+| **20 calendar days** | Refund deadline, everything else. | 14 CFR 260.2 | same page |
+| **12 hours** | Domestic bag delay that counts as "significantly delayed" and refunds the bag fee. | 14 CFR 260.2 | same page |
 
-| Case | Found | Fixed by |
-|---|---|---|
-| **gold-003** | The deadlines aren't in § 260.10. That section says only "promptly". `7 business days` / `20 calendar days` live in the **§ 260.2 definition of "Prompt refund"**. The case was unpassable on a faithful corpus. | Added `14CFR-260.2.md` to `must_cite`. |
-| **gold-007** | The fare-difference refund was sourced to Part 260. But § 260.6 gives a refund only where the consumer *declines* the flight, and this passenger flew. The real hook is the proviso at the end of **§ 250.6(c)**: "a passenger seated in a section for which a lower fare is charged shall be entitled to an appropriate refund." | Re-sourced; added a third `not_entitled` item for the Part 260 refund that does *not* apply. |
-| **gold-011** | Itinerary-based scope was cited to § 260.3. That section governs which *carriers* are bound; it contains no geography. Scope is in the **§ 260.2** definitions of "covered carrier" and "covered flight" — "to, from, or within the United States". | `must_cite` → `14CFR-260.2.md`; added the § 250.2 and § 259.4 scope limits as supporting facts. |
-| **gold-006** | Said the international trigger was "6 hours of departure **or** arrival delay". § 260.2 keys it to **arrival**; the only departure prong covers a flight moved *earlier* than scheduled. Verdict unchanged, reasoning wrong — and the reasoning is what generalises. | Reworded. The fixture's larger, more salient 4-hour departure delay is now explicit bait. |
-| **gold-001** | "Compensation is on top of your ticket" is true and is **not in the CFR**. It appears only in DOT's *Fly Rights* guidance. `must_cite` named two sections, neither of which contains it. | Added `dot-flyrights.md` to the corpus and to `must_cite`, and introduced a third authority tier. Also added the § 250.5(f) ancillary-fee refund, which *is* in the CFR. |
-| **gold-009** | Claimed a bag-fee refund for a **destroyed** bag. § 260.5 covers bags that are *lost* or *significantly delayed*; "lost bag" is undefined in Part 260 and a destroyed bag is neither. | Moved to `not_entitled`, with the gap in the definitions named as the reason. |
-
-Four smaller corrections: gold-004 gained the **12-hour** delayed-bag threshold (also in
-§ 260.2, not § 260.5) and the Mishandled Baggage Report precondition; gold-001's written
-statement is due "immediately after" the denied boarding, not "at the time of"; gold-001's
-band wording moved to "not less than 2 hours", because the 2-hour boundary falls into the
-400% band, not the 200% one.
-
-## What the check added
-
-**gold-020**, an award-ticket case. § 250.1 defines a **"zero fare ticket"** and § 250.5(d)
-says the rules apply to it, with the fare taken as "the lowest cash, check, or credit card
-payment charged for a ticket in the same class of service on that flight."
-
-This mattered because gold-012 — no fare supplied, so stop and ask — was one detail away
-from teaching the wrong lesson. On an award ticket the passenger *cannot* supply a fare and
-is not required to; the rule imputes one. A system that generalises "missing fare → abstain"
-passes gold-012 and fails gold-020, which is precisely the overfitting a golden set exists
-to expose. gold-012's fixture is now pinned to a cash purchase so the two cases are clean.
-
-## Confirmed against primary text
-
-The 250.5 bands and the `$1,075` / `$2,150` caps; the § 250.6(c) downgrade carve-out; the
-§ 259.4 tarmac limits (3h / 4h / 2h) **and the finding that nothing in Part 259 pays a
-passenger anything**; the § 260.2 thresholds (3h domestic / 6h international arrival,
-downgrade as a significant change); § 260.6's accept-and-you-forfeit structure; the
-7/20-day deadlines; § 260.4 and advance seat selection as a named ancillary service; the
-§ 254.4 `$4,700` limit as a floor on liability rather than a payout.
-
-And the load-bearing negative, which was attacked directly and held: **no US regulation
-requires cash compensation for a flight delay.** Parts 250, 254, 259 and 260 were each
-searched. Every monetary remedy in US law is a refund, denied boarding compensation for an
-oversale, or a baggage liability claim. § 259.5(b)(14) requires a carrier only to *identify*
-the services it provides to mitigate inconvenience — it mandates no hotel, no meal, no
-ground transport. DOT's own guidance says it plainly: "Contrary to popular belief, for
-domestic itineraries airlines are not required to compensate passengers whose flights are
-delayed or canceled."
-
-That sentence is the thesis of the project, and gold-014 is built on it.
-
-## Still unverified
-
-- **The superseded editions.** Historical CFR text was not reachable here. Verify the two
-  `@2024-01-01` files after running `fetch_corpus.py --with-superseded`.
-- **EU261 Articles 5–9.** Not fetched. gold-014's claim that it doesn't reach a
-  Houston–Denver itinerary is uncontroversial but unchecked against the text.
-- **`coc-carrier-a.md`** in gold-005. Synthetic until you pick real carriers. The negative
-  half — no federal hotel requirement — is confirmed; the positive half is whatever the
-  contract you choose actually says.
+Two of these — the § 250.5 caps and the § 254.4 limit — adjust for inflation roughly every two
+years. They are the ones most likely to have moved. `corpus/fetch_corpus.py` stamps the date
+into every downloaded file, so a disagreement is visible rather than silent. **If the download
+disagrees with this page, the download is right.**
 
 ---
 
-Six wrong citations in nineteen cases, found by reading the sections rather than trusting a
-summary of them. Worth saying out loud in the write-up: **the golden set was the first thing
-that got graded**, and it failed. Freezing a wrong case is worse than not freezing, because
-a frozen wrong case trains the system to be wrong and then certifies it.
+## Rules that decide most cases
+
+**No US regulation pays cash for a delayed flight.** Parts 250, 254, 259 and 260 were each
+searched. Every monetary remedy in US law is one of three things: a refund, denied boarding
+compensation for an oversale, or a baggage claim. The €600 figure people have heard of is EU
+Regulation 261/2004 and does not reach a US domestic itinerary.
+
+**Accepting the rebooking ends the refund right.** § 260.6 gives a refund only where the
+passenger *declines* the delayed or changed flight. Someone who flew has nothing left to
+decline.
+
+**Meals and hotels are not in the CFR at all.** They are commitments individual airlines
+published under their customer service plans. § 259.5(b)(14) requires a carrier only to
+*identify* what it offers — it mandates nothing. A case that says "DOT requires a hotel" is
+wrong.
+
+**The tarmac rule pays nothing.** § 259.4 is a service and deplaning obligation enforced by
+DOT. No money flows to the passenger. This is the most common over-promise in the domain.
+
+---
+
+## Cases in `golden/candidates-shilpi.jsonl`
+
+Drafted with Claude, then re-checked against the sections above. **Six were wrong and were
+corrected**, one was added, two adjusted. The corrections are listed in the shared spreadsheet.
+The most instructive one: a case cited § 260.10 for the 7-business-day deadline. Section 260.10
+says only "promptly" — both deadlines live in the § 260.2 definition of *prompt refund*. The
+answer was right and the citation was wrong, which made the case impossible to pass.
+
+Worth assuming the same rate of error in any set drafted with AI help. Legal text generated by
+a model reads exactly like the real thing.
+
+---
+
+## Not verified
+
+- **The superseded editions.** eCFR's historical URLs were not reachable. Check the two files
+  `fetch_corpus.py --with-superseded` writes before trusting any case that turns on the older
+  dollar figures.
+- **EU 261/2004.** Not fetched. Uncontroversial that it doesn't reach a US domestic flight, but
+  unchecked against the text.
+- **Airline contracts of carriage.** Not chosen yet, so nothing to check.
