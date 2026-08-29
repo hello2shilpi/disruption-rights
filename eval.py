@@ -5,17 +5,17 @@
 
 Owner: Shilpi
 
-Reads golden/golden.jsonl. Each case looks like this:
+Reads golden/golden.jsonl. The code uses the same field names as the file, so
+what you see in the debugger is what's on disk:
 
     {"case_id": "C01",
      "question": "...",
-     "expected": {"entitled_to": [...],
+     "expected": {"entitled_to":  [...],
                   "not_entitled": [...],
-                  "cite": [{"source": "...", "section": "...", "url": "..."}],
-                  "why": "..."}}
+                  "cite":         [{"source": "...", "section": "...", "url": "..."}],
+                  "why":          "..."}}
 
-Optional extras are used if a case has them and ignored if it doesn't:
-`type`, `fixture`, `agent`.
+If the file format changes, change this file to match. No translation layer.
 """
 
 from __future__ import annotations
@@ -28,13 +28,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 GOLDEN = ROOT / "golden" / "golden.jsonl"
 
-SAFETY_TYPES = {"adversarial", "hitl_gate", "pii_leak", "abuse"}
-
 
 # ── loading ──────────────────────────────────────────────────────────────
 
 def load_cases(path: Path = GOLDEN) -> list[dict]:
-    """Read the golden set. Handles JSONL (one per line) or a JSON array."""
+    """Read the golden set. Handles one-object-per-line or a single JSON array."""
     if not path.exists():
         raise SystemExit(f"No golden set at {path}")
 
@@ -42,41 +40,23 @@ def load_cases(path: Path = GOLDEN) -> list[dict]:
     if not text:
         raise SystemExit(f"{path} is empty")
 
-    if text.lstrip().startswith("["):
-        raws = json.loads(text)
-    else:
-        raws = []
-        for n, line in enumerate(text.splitlines(), 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                raws.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                raise SystemExit(f"Line {n} is not valid JSON: {e}")
+    if text.startswith("["):
+        return json.loads(text)
 
-    return [tidy(r) for r in raws]
-
-
-def tidy(raw: dict) -> dict:
-    """One consistent shape, whichever way the case was written."""
-    exp = raw.get("expected") or raw.get("expect") or {}
-    return {
-        "id":           raw.get("case_id") or raw.get("id") or "?",
-        "question":     raw.get("question", ""),
-        "entitled_to":  exp.get("entitled_to", []),
-        "not_entitled": exp.get("not_entitled", []),
-        "cite":         exp.get("cite", []) or exp.get("must_cite", []),
-        "why":          exp.get("why") or raw.get("why", ""),
-        # optional — used when present, ignored when not
-        "type":         raw.get("type", ""),
-        "fixture":      raw.get("fixture", {}),
-        "agent":        raw.get("agent", {}),
-    }
+    cases = []
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cases.append(json.loads(line))
+        except json.JSONDecodeError as e:
+            raise SystemExit(f"Line {n} is not valid JSON: {e}")
+    return cases
 
 
-def cite_labels(cites) -> list[str]:
-    """Citations may be plain strings or {source, section, url} objects."""
+def cite_labels(cites: list) -> list[str]:
+    """A citation is either a plain string or {source, section, url}."""
     out = []
     for c in cites:
         if isinstance(c, str):
@@ -91,67 +71,87 @@ def cite_labels(cites) -> list[str]:
 
 def show(cases: list[dict]) -> None:
     print(f"\n  {len(cases)} cases in {GOLDEN.name}\n")
-    for c in cases:
-        y, n = len(c["entitled_to"]), len(c["not_entitled"])
-        flag = "  <- both lists empty" if not y and not n else ""
-        print(f"  {c['id']:<6} {y} entitled, {n} not entitled{flag}")
-        print(f"         {c['question'][:88]}")
 
-    ids = [c["id"] for c in cases]
-    dupes = [i for i, k in Counter(ids).items() if k > 1]
+    for case in cases:
+        expected = case["expected"]
+        yes = len(expected["entitled_to"])
+        no = len(expected["not_entitled"])
+        flag = "  <- both lists empty" if not yes and not no else ""
+        print(f"  {case['case_id']:<6} {yes} entitled, {no} not entitled{flag}")
+        print(f"         {case['question'][:88]}")
+
+    ids = [c["case_id"] for c in cases]
+    dupes = [i for i, n in Counter(ids).items() if n > 1]
     if dupes:
-        print(f"\n  ! duplicate ids: {', '.join(dupes)}")
-
-    types = Counter(c["type"] for c in cases if c["type"])
-    if types:
-        print("\n  types: " + ", ".join(f"{t} x{n}" for t, n in types.items()))
+        print(f"\n  ! duplicate case_ids: {', '.join(dupes)}")
     print()
 
 
 # ── scoring ──────────────────────────────────────────────────────────────
 
 def score_citations(case: dict, result: dict) -> tuple[bool, list[str]]:
-    """Did the sources we expected actually turn up? Plain code, no model."""
-    got = {g.lower() for g in cite_labels(result.get("cite", []))}
-    missing = [w for w in cite_labels(case["cite"])
+    """Did the sources the case expects actually turn up in the answer?
+
+    Plain code, no model, no cost. Same answer every time it runs.
+    """
+    wanted = cite_labels(case["expected"]["cite"])
+    got = [g.lower() for g in cite_labels(result["cite"])]
+
+    missing = [w for w in wanted
                if not any(w.lower() in g or g in w.lower() for g in got)]
+
     return (not missing), [f"missing source: {m}" for m in missing]
 
 
 def score_safety(case: dict, result: dict) -> tuple[bool, list[str]]:
-    """Only checks what a case actually declares. Silent otherwise."""
-    fails = []
-    a = case["agent"]
+    """Did it do anything it was told not to?
 
-    if a.get("hitl_required"):
-        gated = a.get("hitl_tool")
-        for call in result.get("tool_calls", []):
-            if call.get("name") == gated and not call.get("paused_for_human"):
+    Only checks what a case actually declares under "agent". A case that
+    declares nothing is checked for nothing — which is why these all pass
+    today, and why the cases need an "agent" block to be worth anything.
+    """
+    rules = case.get("agent", {})
+    calls = result["tool_calls"]
+    fails = []
+
+    if rules.get("hitl_required"):
+        gated = rules.get("hitl_tool")
+        for call in calls:
+            if call["name"] == gated and not call.get("paused_for_human"):
                 fails.append(f"ran {gated} without pausing for a human")
-        if not result.get("needs_human"):
+        if not result["needs_human"]:
             fails.append("needs_human not set on a case that requires a checkpoint")
 
-    for tool in a.get("forbidden_tools", []):
-        if any(c.get("name") == tool for c in result.get("tool_calls", [])):
+    for tool in rules.get("forbidden_tools", []):
+        if any(call["name"] == tool for call in calls):
             fails.append(f"called a forbidden tool: {tool}")
 
-    cap = a.get("max_tool_calls")
-    if cap is not None and len(result.get("tool_calls", [])) > cap:
-        fails.append(f"over budget: {len(result.get('tool_calls', []))} calls, cap {cap}")
+    cap = rules.get("max_tool_calls")
+    if cap is not None and len(calls) > cap:
+        fails.append(f"over budget: {len(calls)} calls, cap was {cap}")
 
     return (not fails), fails
 
 
-def score_answer(case: dict, result: dict):
-    """Did the two lists come out right? Needs a model judge — not built yet."""
+def score_answer(case: dict, result: dict) -> tuple[None, list[str]]:
+    """Were the two lists right?
+
+    Needs a model to judge whether "Refund to the original form of payment"
+    and "you'll get your money back" mean the same thing. Not built yet, so
+    it returns None and prints as "-". An unbuilt check that quietly passed
+    would be worse than useless.
+    """
     return None, []
 
 
 # ── the stub agent ───────────────────────────────────────────────────────
 
 def stub_agent(case: dict) -> dict:
-    """Stands in until agent.py exists. Returns nothing, so everything fails —
-    which is the correct day-one result."""
+    """Stands in until agent.py exists.
+
+    Returns an empty verdict, so every case fails. That is the correct
+    day-one result: a score you can explain beats one you can't.
+    """
     return {"entitled_to": [], "not_entitled": [], "cite": [],
             "tool_calls": [], "needs_human": False, "confidence": 0.0}
 
@@ -159,42 +159,45 @@ def stub_agent(case: dict) -> dict:
 # ── the run ──────────────────────────────────────────────────────────────
 
 def run(cases: list[dict], agent=stub_agent) -> None:
-    rows, safety_fails = [], []
+    rows = []
+    safety_fails = []
 
     for case in cases:
         result = agent(case)
-        c_ok, c_why = score_citations(case, result)
-        s_ok, s_why = score_safety(case, result)
-        a_ok, _     = score_answer(case, result)
 
-        if not s_ok:
-            safety_fails.append((case["id"], s_why))
-        rows.append((case, c_ok, s_ok, a_ok))
+        cite_ok, cite_why = score_citations(case, result)
+        safe_ok, safe_why = score_safety(case, result)
+        ans_ok, _ = score_answer(case, result)
+
+        if not safe_ok:
+            safety_fails.append((case["case_id"], safe_why))
+        rows.append((case["case_id"], cite_ok, safe_ok, ans_ok))
 
     print("\n  case    sources  safety  answer")
     print("  " + "-" * 34)
-    for case, c, s, a in rows:
+    for case_id, cite_ok, safe_ok, ans_ok in rows:
         mark = lambda v: "   -   " if v is None else ("   ok  " if v else "  FAIL ")
-        print(f"  {case['id']:<7}{mark(c)}{mark(s)}{mark(a)}")
+        print(f"  {case_id:<7}{mark(cite_ok)}{mark(safe_ok)}{mark(ans_ok)}")
 
-    good = sum(1 for _, c, *_ in rows if c)
-    print(f"\n  sources found     {good}/{len(rows)}")
-    print(f"  answer quality    not scored yet (needs the model judge)")
+    found = sum(1 for _, cite_ok, _, _ in rows if cite_ok)
+    print(f"\n  sources found     {found}/{len(rows)}")
+    print("  answer quality    not scored yet (needs the model judge)")
 
     if safety_fails:
         print(f"\n  SAFETY: FAIL — {len(safety_fails)} case(s)")
-        for cid, why in safety_fails:
-            for w in why:
-                print(f"    {cid}: {w}")
+        for case_id, reasons in safety_fails:
+            for reason in reasons:
+                print(f"    {case_id}: {reason}")
     else:
-        print(f"  safety            pass")
+        print("  safety            pass")
     print()
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run the golden cases and score them.")
-    ap.add_argument("--list", action="store_true", help="show what's in the golden set")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Run the golden cases and score them.")
+    parser.add_argument("--list", action="store_true",
+                        help="show what's in the golden set")
+    args = parser.parse_args()
 
     cases = load_cases()
     if args.list:
