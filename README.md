@@ -2,11 +2,11 @@
 
 **Modern AI Pro · Level 2 · Track C · Project C5**
 
-An agent that takes a flight disruption and the US DOT rules corpus and returns a JSON verdict:
+An agent that takes a flight disruption and the US DOT rules corpus and returns a verdict:
 what the passenger is entitled to, **what they are not**, and the section that says so.
 
-The `not_entitled` list is the point. Every passenger-rights tool over-promises, because
-over-promising reads as helpful and nobody grades it. This one is graded on it.
+The `not_entitled` list is the point. Most passenger-rights tools only ever say yes, because
+saying yes reads as helpful and nobody grades it. This one is graded on saying no correctly.
 
 ---
 
@@ -14,37 +14,11 @@ over-promising reads as helpful and nobody grades it. This one is graded on it.
 
 | | |
 |---|---|
-| Golden set | **20 cases, frozen** — see `golden/golden.jsonl` |
-| Corpus | 37 documents specified, 30 machine-fetchable — see `corpus/MANIFEST.md` |
-| Harness | in progress — `eval.py` |
+| Golden set | `golden/golden.jsonl` — frozen before the system produced anything |
+| Candidates | `golden/candidates-shilpi.jsonl` — extra cases offered into the merge, not scored |
+| Corpus | 30 CFR sections, downloaded by script — see `corpus/MANIFEST.md` |
+| Harness | `eval.py` — runs the cases, prints the score |
 | Agent | in progress |
-
----
-
-## The verdict
-
-```json
-{
-  "entitled_to": [
-    { "item": "Denied boarding compensation of $880",
-      "basis": "400% of the $220 fare, under the $2,150 cap",
-      "authority": "regulation",
-      "cite": ["14 CFR 250.5(a)(3)"] }
-  ],
-  "not_entitled": [
-    { "item": "Additional payment for the 3-hour delay itself",
-      "why": "The delay is what sets the 400% band; it is not separately compensable",
-      "cite": ["14 CFR 250.5(a)"] }
-  ],
-  "unknown": [],
-  "needs_human": false,
-  "confidence": 0.9
-}
-```
-
-`authority` is one of `regulation` · `contract` · `guidance`. Meals and hotels for a
-controllable delay are **not** in the CFR — they are promises individual airlines published.
-A tool that merges the two sends a passenger to argue a rule that does not exist.
 
 ---
 
@@ -56,38 +30,76 @@ pip install -r requirements.txt
 
 cp .env.example .env        # then put your key in .env
 python corpus/fetch_corpus.py --with-superseded
-python eval.py --summary
+
+python eval.py --list       # what's in the golden set
+python eval.py              # run every case and score it
 ```
+
+---
+
+## A case
+
+```json
+{"case_id": "C01",
+ "question": "My domestic flight was cancelled for weather and I rejected rebooking. What am I owed?",
+ "expected": {
+   "entitled_to":  ["Refund to the original form of payment"],
+   "not_entitled": ["Automatic additional cash compensation"],
+   "cite":         [{"source": "...", "section": "...", "url": "..."}],
+   "why":          "Cancellation reason does not remove the refund right when the passenger declines alternatives."}}
+```
+
+`type`, `fixture` and `agent` are optional. The harness uses them when a case has them and
+ignores them when it doesn't.
+
+## What the agent returns
+
+```python
+def answer(case: dict) -> dict:
+    return {
+        "entitled_to":  [...],
+        "not_entitled": [...],
+        "cite":         [{"source": ..., "section": ..., "url": ...}],
+        "tool_calls":   [{"name": "search_rules", "args": {...}}],
+        "needs_human":  False,
+        "confidence":   0.8,
+    }
+```
+
+Two lookups — flight status, and the rules corpus — then one grounded model call. If the
+sources don't support a view, say so and keep `confidence` at or below 0.5.
 
 ---
 
 ## Layout
 
 ```
-golden/golden.jsonl      the 20 frozen test cases
-corpus/MANIFEST.md       what the corpus is and why
-corpus/fetch_corpus.py   downloads 30 CFR sections from eCFR
-corpus/md/               the downloaded documents (not committed)
-eval.py                  the harness: runs the cases, prints two scorecards
-PROJECT.md               the build plan
-FACTCHECK.md             the pre-freeze review against eCFR
+golden/golden.jsonl               the frozen cases
+golden/candidates-shilpi.jsonl    extra candidates, not scored
+corpus/MANIFEST.md                what the corpus is and why
+corpus/fetch_corpus.py            downloads 30 CFR sections from eCFR
+corpus/md/                        the downloaded documents (not committed)
+eval.py                           the harness
+FACTCHECK.md                      regulation figures verified against eCFR
+PROJECT.md                        the build plan
 ```
 
 ---
 
 ## The rule
 
-The golden set was written and committed **before** the system produced anything. From that
-commit, `question` and `expect` change only by a reviewed commit with a stated reason.
+The golden set was committed **before** the system produced anything. From that commit,
+questions and expected answers change only by a reviewed commit with a stated reason.
 
 Cases written after you see the output grade whatever you already built.
 
 ---
 
-## Provenance
+## Corpus
 
-The 20 cases were drafted with Claude, then re-checked against the eCFR text on 25 August
-2026. **Six were wrong and were corrected**, one was added, two adjusted — `FACTCHECK.md` has
-the record. Three claims remain unverified and are marked as such.
+Real US federal aviation regulation, downloaded from ecfr.gov — 14 CFR Parts 250, 254, 259 and
+260. Not the practice corpora supplied with the course. Every file carries the date and version
+it was fetched at, which is what makes the superseded-version cases scoreable at all.
 
-Regulations are real and current as of that date. Flight numbers are invented.
+Regulation figures were verified on 25 August 2026 — see `FACTCHECK.md`, which lists each one
+with a link so anyone can re-check it in a couple of minutes.
