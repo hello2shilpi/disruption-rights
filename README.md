@@ -17,7 +17,7 @@ saying yes reads as helpful and nobody grades it. This one is graded on saying n
 | Golden set | `golden/golden.jsonl` — frozen before the system produced anything |
 | Corpus | 31 CFR sections, downloaded by script — see `corpus/MANIFEST.md` |
 | Harness | `eval.py` — runs the cases, prints the score |
-| Agent | in progress |
+| Agent | `agent.py` — fixture-first retrieval, strict JSON verdicts, offline baseline |
 
 ---
 
@@ -31,7 +31,10 @@ cp .env.example .env        # then put your key in .env
 python corpus/fetch_corpus.py --with-superseded
 
 python eval.py --list       # what's in the golden set
-python eval.py              # run every case and score it
+python eval.py --agent      # run every case offline and score it
+python eval.py --agent --model  # run grounded OpenAI verdicts (uses API credits)
+python eval.py --file golden/candidates-shilpi.jsonl --agent
+pytest -q
 ```
 
 ---
@@ -78,8 +81,11 @@ corpus/MANIFEST.md                what the corpus is and why
 corpus/fetch_corpus.py            downloads 31 CFR sections from eCFR
 corpus/md/                        the downloaded documents (not committed)
 eval.py                           the harness
+agent.py                          orchestration and grounded model call
+tools.py                          corpus search, flight fixtures/live lookup, action gates
 FACTCHECK.md                      regulation figures verified against eCFR
 PROJECT.md                        the build plan
+report.md                         evaluation/report template
 ```
 
 ---

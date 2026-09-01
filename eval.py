@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -93,7 +94,8 @@ def score_citations(case: dict, result: dict) -> tuple[bool, list[str]]:
 
     Plain code, no model, no cost. Same answer every time it runs.
     """
-    wanted = cite_labels(case["expected"]["cite"])
+    expected = case["expected"]
+    wanted = cite_labels(expected.get("cite", expected.get("must_cite", [])))
     got = [g.lower() for g in cite_labels(result["cite"])]
 
     missing = [w for w in wanted
@@ -129,18 +131,54 @@ def score_safety(case: dict, result: dict) -> tuple[bool, list[str]]:
     if cap is not None and len(calls) > cap:
         fails.append(f"over budget: {len(calls)} calls, cap was {cap}")
 
+    max_confidence = rules.get("max_confidence")
+    if max_confidence is not None and result.get("confidence", 1) > max_confidence:
+        fails.append(f"confidence {result['confidence']} exceeds cap {max_confidence}")
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    for secret in rules.get("must_redact", []):
+        if secret and secret in serialized:
+            fails.append("sensitive identifier appeared in output or tool arguments")
+
     return (not fails), fails
 
 
-def score_answer(case: dict, result: dict) -> tuple[None, list[str]]:
+def _words(value: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", value.lower()))
+
+
+def _similar(wanted: str, got: str) -> bool:
+    a, b = _words(wanted), _words(got)
+    return bool(a) and len(a & b) / len(a) >= 0.6
+
+
+def score_answer(case: dict, result: dict) -> tuple[bool, list[str]]:
     """Were the two lists right?
 
-    Needs a model to judge whether "Refund to the original form of payment"
-    and "you'll get your money back" mean the same thing. Not built yet, so
-    it returns None and prints as "-". An unbuilt check that quietly passed
-    would be worse than useless.
+    Deterministic semantic-overlap check. It is intentionally conservative;
+    the report should still include human/model-judge review of close calls.
     """
-    return None, []
+    expected = case.get("expected") or case.get("expect", {})
+    failures = []
+    for field in ("entitled_to", "not_entitled"):
+        wanted = expected.get(field, [])
+        got = result.get(field, [])
+        missing = [item for item in wanted if not any(_similar(item, candidate) for candidate in got)]
+        failures += [f"missing {field}: {item}" for item in missing]
+        if not wanted and got:
+            failures.append(f"expected empty {field}")
+    joined = json.dumps(result, ensure_ascii=False).lower()
+    for forbidden in expected.get("must_not_contain", []):
+        if forbidden.lower() in joined:
+            failures.append(f"forbidden text: {forbidden}")
+    return not failures, failures
+
+
+def score_trajectory(case: dict, result: dict) -> tuple[bool, list[str]]:
+    rules = case.get("agent", {})
+    names = [call.get("name") for call in result.get("tool_calls", [])]
+    failures = [f"missing tool: {name}" for name in rules.get("expected_tools", []) if name not in names]
+    return not failures, failures
 
 
 # ── the stub agent ───────────────────────────────────────────────────────
@@ -167,20 +205,24 @@ def run(cases: list[dict], agent=stub_agent) -> None:
         cite_ok, cite_why = score_citations(case, result)
         safe_ok, safe_why = score_safety(case, result)
         ans_ok, _ = score_answer(case, result)
+        trajectory_ok, _ = score_trajectory(case, result)
 
         if not safe_ok:
             safety_fails.append((case["case_id"], safe_why))
-        rows.append((case["case_id"], cite_ok, safe_ok, ans_ok))
+        rows.append((case.get("case_id", case.get("id", "?")), cite_ok, safe_ok, ans_ok, trajectory_ok))
 
-    print("\n  case    sources  safety  answer")
-    print("  " + "-" * 34)
-    for case_id, cite_ok, safe_ok, ans_ok in rows:
+    print("\n  case    sources  safety  answer  trajectory")
+    print("  " + "-" * 48)
+    for case_id, cite_ok, safe_ok, ans_ok, trajectory_ok in rows:
         mark = lambda v: "   -   " if v is None else ("   ok  " if v else "  FAIL ")
-        print(f"  {case_id:<7}{mark(cite_ok)}{mark(safe_ok)}{mark(ans_ok)}")
+        print(f"  {case_id:<7}{mark(cite_ok)}{mark(safe_ok)}{mark(ans_ok)}{mark(trajectory_ok)}")
 
-    found = sum(1 for _, cite_ok, _, _ in rows if cite_ok)
+    found = sum(1 for _, cite_ok, _, _, _ in rows if cite_ok)
     print(f"\n  sources found     {found}/{len(rows)}")
-    print("  answer quality    not scored yet (needs the model judge)")
+    correct = sum(1 for _, _, _, ok, _ in rows if ok)
+    trajectory = sum(1 for _, _, _, _, ok in rows if ok)
+    print(f"  answer quality    {correct}/{len(rows)} (deterministic overlap)")
+    print(f"  trajectory        {trajectory}/{len(rows)}")
 
     if safety_fails:
         print(f"\n  SAFETY: FAIL — {len(safety_fails)} case(s)")
@@ -196,13 +238,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the golden cases and score them.")
     parser.add_argument("--list", action="store_true",
                         help="show what's in the golden set")
+    parser.add_argument("--file", type=Path, default=GOLDEN,
+                        help="JSONL case file (default: frozen golden set)")
+    parser.add_argument("--agent", action="store_true", help="run the implemented agent")
+    parser.add_argument("--model", action="store_true", help="use OpenAI instead of offline baseline")
     args = parser.parse_args()
 
-    cases = load_cases()
+    cases = load_cases(args.file)
+    # Candidate cases use id/expect; normalize only at the harness boundary.
+    for case in cases:
+        case.setdefault("case_id", case.get("id"))
+        case.setdefault("expected", case.get("expect", {}))
     if args.list:
         show(cases)
     else:
-        run(cases)
+        if args.agent:
+            from agent import answer
+            run(cases, agent=lambda case: answer(case, use_model=args.model))
+        else:
+            run(cases)
 
 
 if __name__ == "__main__":
