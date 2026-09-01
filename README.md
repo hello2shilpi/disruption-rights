@@ -35,6 +35,8 @@ python eval.py --list       # what's in the golden set
 python eval.py --agent      # run every case offline and score it
 python eval.py --agent --model  # run grounded OpenAI verdicts (uses API credits)
 python eval.py --file golden/candidates-shilpi.jsonl --agent
+python eval.py --file golden/C5-golden-merged.jsonl --agent --model \
+  --verbose --output c5-results.json
 pytest -q
 ```
 

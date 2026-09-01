@@ -251,21 +251,61 @@ def stub_agent(case: dict) -> dict:
 
 # ── the run ──────────────────────────────────────────────────────────────
 
-def run(cases: list[dict], agent=stub_agent) -> None:
+def run(cases: list[dict], agent=stub_agent, *, verbose: bool = False,
+        output: Path | None = None, progress: bool = False) -> None:
     rows = []
+    records = []
     safety_fails = []
 
-    for case in cases:
-        result = agent(case)
+    for index, case in enumerate(cases, 1):
+        if progress:
+            print(f"  [{index}/{len(cases)}] {case['case_id']}...", flush=True)
+        try:
+            result = agent(case)
+        except Exception as exc:  # Keep long/paid evaluation runs recoverable.
+            error = f"{type(exc).__name__}: {exc}"
+            result = {"entitled_to": [], "not_entitled": [], "cite": [],
+                      "tool_calls": [], "needs_human": False, "confidence": 0.0,
+                      "error": error}
+            rows.append((case["case_id"], False, False, False, False))
+            safety_fails.append((case["case_id"], [f"agent error: {error}"]))
+            records.append({
+                "case_id": case["case_id"], "question": case["question"],
+                "result": result,
+                "scores": {"sources": False, "safety": False,
+                           "answer": False, "trajectory": False},
+                "failures": {"sources": [f"agent error: {error}"],
+                             "safety": [f"agent error: {error}"],
+                             "answer": [f"agent error: {error}"],
+                             "trajectory": [f"agent error: {error}"]},
+            })
+            if output:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n",
+                                  encoding="utf-8")
+            continue
 
         cite_ok, cite_why = score_citations(case, result)
         safe_ok, safe_why = score_safety(case, result)
-        ans_ok, _ = score_answer(case, result)
-        trajectory_ok, _ = score_trajectory(case, result)
+        ans_ok, ans_why = score_answer(case, result)
+        trajectory_ok, trajectory_why = score_trajectory(case, result)
 
         if not safe_ok:
             safety_fails.append((case["case_id"], safe_why))
         rows.append((case.get("case_id", case.get("id", "?")), cite_ok, safe_ok, ans_ok, trajectory_ok))
+        records.append({
+            "case_id": case["case_id"], "question": case["question"],
+            "result": result,
+            "scores": {"sources": cite_ok, "safety": safe_ok,
+                       "answer": ans_ok, "trajectory": trajectory_ok},
+            "failures": {"sources": cite_why, "safety": safe_why,
+                         "answer": ans_why, "trajectory": trajectory_why},
+        })
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n",
+                          encoding="utf-8")
 
     print("\n  case    sources  safety  answer  trajectory")
     print("  " + "-" * 48)
@@ -287,6 +327,19 @@ def run(cases: list[dict], agent=stub_agent) -> None:
                 print(f"    {case_id}: {reason}")
     else:
         print("  safety            pass")
+    if verbose:
+        print("\n  failure details")
+        print("  " + "-" * 48)
+        for record in records:
+            failures = [(name, reasons) for name, reasons in record["failures"].items() if reasons]
+            if not failures:
+                continue
+            print(f"  {record['case_id']}")
+            for category, reasons in failures:
+                for reason in reasons:
+                    print(f"    {category}: {reason}")
+    if output:
+        print(f"  detailed results  {output}")
     print()
 
 
@@ -298,6 +351,8 @@ def main() -> None:
                         help="JSONL case file (default: frozen golden set)")
     parser.add_argument("--agent", action="store_true", help="run the implemented agent")
     parser.add_argument("--model", action="store_true", help="use OpenAI instead of offline baseline")
+    parser.add_argument("--verbose", action="store_true", help="print exact failure reasons")
+    parser.add_argument("--output", type=Path, help="write verdicts, scores, and failures as JSON")
     args = parser.parse_args()
 
     cases = [normalize_case(case) for case in load_cases(args.file)]
@@ -306,9 +361,10 @@ def main() -> None:
     else:
         if args.agent:
             from agent import answer
-            run(cases, agent=lambda case: answer(case, use_model=args.model))
+            run(cases, agent=lambda case: answer(case, use_model=args.model),
+                verbose=args.verbose, output=args.output, progress=args.model)
         else:
-            run(cases)
+            run(cases, verbose=args.verbose, output=args.output)
 
 
 if __name__ == "__main__":
