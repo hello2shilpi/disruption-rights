@@ -28,6 +28,7 @@ python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\ac
 pip install -r requirements.txt
 
 cp .env.example .env        # then put your key in .env
+# Tutor gateways: also set OPENAI_BASE_URL, OPENAI_MODEL, and optionally OPENAI_API_MODE=chat
 python corpus/fetch_corpus.py --with-superseded
 
 python eval.py --list       # what's in the golden set

@@ -19,6 +19,12 @@ SAFE_FLIGHT_FIELDS = {
     "status", "cancelled", "delay_min", "arrival_delay_min", "tarmac_delay_min",
     "deplaned", "denied_boarding", "oversold", "fare_paid_usd",
     "rebooked_arrival_delta_min", "accepted_rebooking", "reason",
+    "refund_requested_on", "payment_method", "days_elapsed",
+}
+FLIGHT_ALIASES = {
+    "destination": "dest",
+    "arrival_delay_minutes": "arrival_delay_min",
+    "tarmac_delay_minutes": "tarmac_delay_min",
 }
 TOKEN = re.compile(r"[a-z0-9]+(?:[.$-][a-z0-9]+)*", re.I)
 
@@ -105,7 +111,11 @@ def search_rules(query: str, *, as_of: str | None = None,
 
 def _sanitize_flight(data: dict[str, Any]) -> dict[str, Any]:
     """Drop free-form/vendor fields and passenger identifiers."""
-    return {key: value for key, value in data.items() if key in SAFE_FLIGHT_FIELDS}
+    normalized = dict(data)
+    for source, target in FLIGHT_ALIASES.items():
+        if source in normalized and target not in normalized:
+            normalized[target] = normalized.pop(source)
+    return {key: value for key, value in normalized.items() if key in SAFE_FLIGHT_FIELDS}
 
 
 def lookup_flight_status(case: dict[str, Any], *, live: bool = False) -> dict[str, Any]:

@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from agent import answer
+from agent import _json_object, answer
 from tools import file_dot_complaint, lookup_flight_status, search_rules
 
 
@@ -39,6 +39,13 @@ class AgentTests(unittest.TestCase):
 
     def test_rule_search_has_checked_fallback(self):
         self.assertTrue(search_rules("three hours domestic refund"))
+
+    def test_gateway_markdown_json_is_accepted(self):
+        value = _json_object(
+            '```json\n{"entitled_to": [], "not_entitled": [], "cite": [], '
+            '"needs_human": false, "confidence": 0.4}\n```'
+        )
+        self.assertEqual(value["confidence"], 0.4)
 
 
 if __name__ == "__main__":
