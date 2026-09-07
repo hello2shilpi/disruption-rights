@@ -3,3 +3,4 @@ python-dotenv>=1.0
 rich>=13.7
 chromadb>=1.0
 sentence-transformers>=3.0
+pytest>=8.0

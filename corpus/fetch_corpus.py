@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -82,15 +83,47 @@ SUPERSEDED = [
 ]
 
 
+def curl_get(url: str) -> bytes:
+    """Fallback for eCFR's WAF, which sometimes rejects Python TLS clients."""
+    try:
+        result = subprocess.run(
+            [
+                "curl", "--fail-with-body", "--silent", "--show-error",
+                "--location", "--compressed", "--retry", "2",
+                "--retry-all-errors", "--connect-timeout", "15",
+                "--max-time", "60", "--header", "Accept: */*", url,
+            ],
+            check=False, capture_output=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("eCFR returned 406 and curl is not installed") from exc
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"curl could not fetch eCFR ({result.returncode}): {detail}")
+    return result.stdout
+
+
 def get(url: str, tries: int = 3) -> bytes:
     """One HTTP GET, with a couple of retries on anything but a 404."""
     for attempt in range(tries):
         try:
             req = urllib.request.Request(
-                url, headers={"User-Agent": "disruption-rights-corpus/1.0 (coursework)"})
+                url,
+                headers={
+                    # eCFR's WAF currently returns 406 for urllib's sparse
+                    # default request headers, even on the developer API.
+                    "Accept": "application/xml, application/json;q=0.9, */*;q=0.1",
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 disruption-rights-corpus/1.0"
+                    ),
+                },
+            )
             with urllib.request.urlopen(req, timeout=60) as r:
                 return r.read()
         except urllib.error.HTTPError as e:
+            if e.code == 406:
+                return curl_get(url)
             if e.code == 404 or attempt == tries - 1:
                 raise
             time.sleep(2 ** attempt)
