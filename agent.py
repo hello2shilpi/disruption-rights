@@ -15,6 +15,64 @@ except ImportError:  # Offline baseline has no third-party dependency.
 
 from tools import lookup_flight_status, search_rules
 
+_ONES = {w: i for i, w in enumerate(
+    ("zero one two three four five six seven eight nine ten eleven twelve "
+     "thirteen fourteen fifteen sixteen seventeen eighteen nineteen").split())}
+_TENS = {w: i * 10 for i, w in enumerate(
+    "zero ten twenty thirty forty fifty sixty seventy eighty ninety".split())}
+_SCALES = {"hundred": 100}
+_NUMBER_WORDS = {*_ONES, *_TENS, *_SCALES, "and"}
+# One number-phrase directly in front of "hour(s)/hr(s)" or "minute(s)/min(s)",
+# e.g. "twenty-two hours", "three and a half hours", "four minutes".
+_DURATION_WORDS = re.compile(
+    r"\b((?:(?:" + "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True)) + r")[\s-]*)+)"
+    r"(hours?|hrs?|minutes?|mins?)\b"
+)
+
+
+def _word_to_number(text: str) -> int | None:
+    """Parse any English cardinal-number phrase ('four', 'twenty-two', 'one hundred') to an int.
+
+    General on purpose: handles any combination of these words in one pass,
+    so a phrasing the tests haven't seen yet doesn't need a new case added.
+    """
+    chunk = 0
+    found = False
+    for word in re.split(r"[\s-]+", text.strip().lower()):
+        if word in ("and", ""):
+            continue
+        if word in _ONES:
+            chunk += _ONES[word]
+            found = True
+        elif word in _TENS:
+            chunk += _TENS[word]
+            found = True
+        elif word in _SCALES:
+            chunk = (chunk or 1) * _SCALES[word]
+            found = True
+        else:
+            return None
+    return chunk if found else None
+
+
+def _parse_duration_minutes(q: str) -> float | None:
+    """Find a stated duration in the question text and return it in minutes.
+
+    Tries digits first ('3.5 hours', '181 minutes'), then falls back to
+    spelled-out number words ('four hours') via the general parser above —
+    one fallback, not a per-phrasing patch.
+    """
+    if m := re.search(r"(\d+(?:\.\d+)?)[\s-]*(?:hours?|hrs?)", q):
+        return float(m.group(1)) * 60
+    if m := re.search(r"(\d+)[\s-]*(?:minutes?|mins?)", q):
+        return float(m.group(1))
+    if m := _DURATION_WORDS.search(q):
+        value = _word_to_number(m.group(1))
+        if value is not None:
+            return float(value) * 60 if m.group(2).startswith(("hour", "hr")) else float(value)
+    return None
+
+
 load_dotenv()
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
 API_MODE = os.getenv("OPENAI_API_MODE", "auto").lower()
@@ -85,10 +143,8 @@ def _offline_verdict(question: str, flight: dict[str, Any], rules: list[dict[str
     minutes = None
     if flight.get("delay_min") is not None:
         minutes = float(flight["delay_min"])
-    elif m := re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)", q):
-        minutes = float(m.group(1)) * 60
-    elif m := re.search(r"(\d+)\s*(?:minutes?|mins?)", q):
-        minutes = float(m.group(1))
+    else:
+        minutes = _parse_duration_minutes(q)
 
     entitled: list[str] = []
     not_entitled: list[str] = []
@@ -113,7 +169,7 @@ def _offline_verdict(question: str, flight: dict[str, Any], rules: list[dict[str
 
     cites = []
     if supported:
-        cites = [{"source": item["doc_id"], "section": item["section"], "url": item["url"]}
+        cites = [{"source": item.get("source", item["doc_id"]), "section": item["section"], "url": item["url"]}
                  for item in rules[:2]]
     return {"entitled_to": entitled, "not_entitled": not_entitled, "cite": cites,
             "needs_human": _requests_action(question),
