@@ -104,10 +104,8 @@ def cite_labels(cites: list) -> list[str]:
         if isinstance(c, str):
             out.append(c)
         else:
-            bits = [c.get("source"), c.get("section")]
-            out.append(" - ".join(b for b in bits if b) or c.get("url", "?"))
+            out.append(c.get("section") or c.get("source") or c.get("url", "?"))
     return out
-
 
 # ── what's in the set ────────────────────────────────────────────────────
 
