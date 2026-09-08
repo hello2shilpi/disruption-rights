@@ -47,8 +47,12 @@ def _frontmatter(text: str) -> tuple[dict[str, str], str]:
 
 def _documents() -> list[dict[str, Any]]:
     paths = sorted(CORPUS.glob("*.md")) if CORPUS.exists() else []
-    # These checked project notes keep the app usable before corpus download.
-    paths += [ROOT / "FACTCHECK.md", ROOT / "corpus" / "MANIFEST.md"]
+    if not paths:
+        # No corpus downloaded yet — fall back to these checked project notes
+        # so the app still has something to search. Once the real corpus
+        # exists, prefer it exclusively rather than mixing in project notes
+        # that can outscore actual regulation text on keyword density.
+        paths = [ROOT / "FACTCHECK.md", ROOT / "corpus" / "MANIFEST.md"]
     docs = []
     for path in paths:
         if not path.exists():
@@ -97,10 +101,17 @@ def search_rules(query: str, *, as_of: str | None = None,
         score += sum(2.0 for t in set(query_terms) if any(c.isdigit() for c in t) and t in lowered)
         if score:
             meta = doc["meta"]
+            part = meta.get("part")
+            # Prefer a proper "14 CFR Part <n>" / "<section>" pair sourced from
+            # the frontmatter fetch_corpus.py already writes; fall back to the
+            # raw cite/doc_id for hand-added docs that don't have part/section.
+            source_label = f"14 CFR Part {part}" if part else meta.get("cite", doc["id"])
+            section_label = meta.get("section", meta.get("cite", doc["id"]))
             scored.append({
                 "doc_id": doc["id"], "score": round(score, 4),
                 "cite": meta.get("cite", doc["id"]),
-                "section": meta.get("cite", doc["id"]),
+                "source": source_label,
+                "section": section_label,
                 "url": meta.get("source_url", ""),
                 "as_of": meta.get("as_of"), "version": meta.get("version", "current"),
                 "text": doc["text"][:5000],
