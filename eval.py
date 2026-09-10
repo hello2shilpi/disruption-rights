@@ -21,12 +21,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import time
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 GOLDEN = ROOT / "golden" / "golden.jsonl"
+
+# Cost per 1,000,000 tokens, in US dollars. Not hardcoded on purpose — course
+# gateway pricing isn't published anywhere we can rely on, and a wrong
+# guessed price is worse than an honest "unknown." Set these two environment
+# variables to see dollar costs; leave them unset and the report still shows
+# token counts and latency, just no $ figure.
+INPUT_COST_PER_1M = float(os.getenv("OPENAI_INPUT_COST_PER_1M", "0") or 0)
+OUTPUT_COST_PER_1M = float(os.getenv("OPENAI_OUTPUT_COST_PER_1M", "0") or 0)
 
 
 # ── loading ──────────────────────────────────────────────────────────────
@@ -280,6 +290,38 @@ def stub_agent(case: dict) -> dict:
             "tool_calls": [], "needs_human": False, "confidence": 0.0}
 
 
+# ── cost & speed ─────────────────────────────────────────────────────────
+
+def _cost_usd(usage: dict | None) -> float | None:
+    """Turn a token-usage dict (from agent.py's `_usage`) into a dollar cost.
+
+    Returns None when there's nothing to price: no usage at all (offline
+    baseline, or a short-circuit answer that never called the model — both
+    genuinely free), or usage present but no $ rate configured (token counts
+    are still real, we just don't know the price).
+    """
+    if not usage:
+        return None
+    if not (INPUT_COST_PER_1M or OUTPUT_COST_PER_1M):
+        return None
+    input_cost = usage.get("input_tokens", 0) / 1_000_000 * INPUT_COST_PER_1M
+    output_cost = usage.get("output_tokens", 0) / 1_000_000 * OUTPUT_COST_PER_1M
+    return input_cost + output_cost
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Linear-interpolation percentile. No numpy dependency for one function."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    k = (len(ordered) - 1) * pct
+    lo = int(k)
+    hi = min(lo + 1, len(ordered) - 1)
+    if lo == hi:
+        return ordered[lo]
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
+
+
 # ── the run ──────────────────────────────────────────────────────────────
 
 def run(cases: list[dict], agent=stub_agent, *, verbose: bool = False,
@@ -287,13 +329,19 @@ def run(cases: list[dict], agent=stub_agent, *, verbose: bool = False,
     rows = []
     records = []
     safety_fails = []
+    latencies_ms: list[float] = []
+    costs_usd: list[float] = []
+    usage_seen = False
 
     for index, case in enumerate(cases, 1):
         if progress:
             print(f"  [{index}/{len(cases)}] {case['case_id']}...", flush=True)
+        started = time.perf_counter()
         try:
             result = agent(case)
         except Exception as exc:  # Keep long/paid evaluation runs recoverable.
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            latencies_ms.append(elapsed_ms)
             error = f"{type(exc).__name__}: {exc}"
             result = {"entitled_to": [], "not_entitled": [], "cite": [],
                       "tool_calls": [], "needs_human": False, "confidence": 0.0,
@@ -303,6 +351,8 @@ def run(cases: list[dict], agent=stub_agent, *, verbose: bool = False,
             records.append({
                 "case_id": case["case_id"], "question": case["question"],
                 "result": result,
+                "latency_ms": round(elapsed_ms, 1),
+                "cost_usd": None,
                 "scores": {"sources": False, "safety": False,
                            "answer": False, "trajectory": False},
                 "failures": {"sources": [f"agent error: {error}"],
@@ -315,6 +365,15 @@ def run(cases: list[dict], agent=stub_agent, *, verbose: bool = False,
                 output.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n",
                                   encoding="utf-8")
             continue
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        latencies_ms.append(elapsed_ms)
+
+        usage = result.get("_usage")
+        if usage is not None:
+            usage_seen = True
+        cost = _cost_usd(usage)
+        if cost is not None:
+            costs_usd.append(cost)
 
         cite_ok, cite_why = score_citations(case, result)
         safe_ok, safe_why = score_safety(case, result)
@@ -327,6 +386,8 @@ def run(cases: list[dict], agent=stub_agent, *, verbose: bool = False,
         records.append({
             "case_id": case["case_id"], "question": case["question"],
             "result": result,
+            "latency_ms": round(elapsed_ms, 1),
+            "cost_usd": round(cost, 6) if cost is not None else None,
             "scores": {"sources": cite_ok, "safety": safe_ok,
                        "answer": ans_ok, "trajectory": trajectory_ok},
             "failures": {"sources": cite_why, "safety": safe_why,
@@ -350,6 +411,20 @@ def run(cases: list[dict], agent=stub_agent, *, verbose: bool = False,
     trajectory = sum(1 for _, _, _, _, ok in rows if ok)
     print(f"  answer quality    {correct}/{len(rows)} (deterministic overlap)")
     print(f"  trajectory        {trajectory}/{len(rows)}")
+
+    if latencies_ms:
+        p50 = _percentile(latencies_ms, 0.50)
+        p95 = _percentile(latencies_ms, 0.95)
+        print(f"  latency           p50 {p50:,.0f} ms   p95 {p95:,.0f} ms   (per question)")
+    if usage_seen:
+        if costs_usd:
+            total_cost = sum(costs_usd)
+            median_cost = _percentile(costs_usd, 0.50)
+            print(f"  cost              total ${total_cost:.4f}   median ${median_cost:.4f} "
+                  f"per question   ({len(costs_usd)}/{len(rows)} questions called the AI)")
+        else:
+            print("  cost              token counts captured, but no $ rate is set — set "
+                  "OPENAI_INPUT_COST_PER_1M / OPENAI_OUTPUT_COST_PER_1M to see dollar costs")
 
     if safety_fails:
         print(f"\n  SAFETY: FAIL — {len(safety_fails)} case(s)")

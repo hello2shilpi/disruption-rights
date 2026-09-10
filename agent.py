@@ -216,6 +216,40 @@ def _completion_text(completion: Any) -> str | None:
     return None
 
 
+def _usage_dict(usage: Any) -> dict[str, int] | None:
+    """Normalize token usage into one flat shape, whichever API path ran.
+
+    The Responses API and Chat Completions API name the same two numbers
+    differently (input_tokens/output_tokens vs prompt_tokens/completion_tokens).
+    eval.py just needs one shape it can read regardless of which path answered
+    the question — no cost math here, that stays in eval.py where the $ rate
+    lives.
+    """
+    if usage is None:
+        return None
+    input_tokens = getattr(usage, "input_tokens", None)
+    if input_tokens is None:
+        input_tokens = getattr(usage, "prompt_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    if output_tokens is None:
+        output_tokens = getattr(usage, "completion_tokens", None)
+    if input_tokens is None and output_tokens is None:
+        return None
+    input_tokens = input_tokens or 0
+    output_tokens = output_tokens or 0
+    total_tokens = getattr(usage, "total_tokens", None) or (input_tokens + output_tokens)
+    return {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens}
+
+
+def _combine_usage(*usages: dict[str, int] | None) -> dict[str, int] | None:
+    """Add up usage from more than one API call (e.g. a retry) into one total."""
+    parts = [u for u in usages if u]
+    if not parts:
+        return None
+    return {key: sum(p.get(key, 0) for p in parts)
+            for key in ("input_tokens", "output_tokens", "total_tokens")}
+
+
 def _business_days_elapsed(start_date: str, calendar_days: int) -> int | None:
     """Weekdays (Mon-Fri) elapsed over `calendar_days` days starting the day after
     `start_date` (ISO 'YYYY-MM-DD'). Weekends only — federal holidays are not
@@ -303,7 +337,9 @@ def _model_verdict(question: str, flight: dict[str, Any], rules: list[dict[str, 
                 text={"format": {"type": "json_schema", "name": "disruption_verdict",
                                  "strict": True, "schema": VERDICT_SCHEMA}},
             )
-            return _json_object(response.output_text)
+            verdict = _json_object(response.output_text)
+            verdict["_usage"] = _usage_dict(getattr(response, "usage", None))
+            return verdict
         except NotFoundError:
             if API_MODE == "responses":
                 raise
@@ -321,6 +357,7 @@ def _model_verdict(question: str, flight: dict[str, Any], rules: list[dict[str, 
         # Some course gateways implement Chat Completions but not JSON mode.
         completion = client.chat.completions.create(model=MODEL, messages=messages)
     content = _completion_text(completion)
+    usage = _usage_dict(getattr(completion, "usage", None))
     if not content:
         # Retry without optional JSON-mode parameters. Some compatible
         # gateways accept response_format but then return an empty message.
@@ -330,11 +367,16 @@ def _model_verdict(question: str, flight: dict[str, Any], rules: list[dict[str, 
         }]
         completion = client.chat.completions.create(model=MODEL, messages=retry_messages)
         content = _completion_text(completion)
+        # A retry is a second paid call — count both, not just the one that
+        # finally produced text, or the case looks cheaper than it was.
+        usage = _combine_usage(usage, _usage_dict(getattr(completion, "usage", None)))
     if not content:
         finish = (completion.choices[0].finish_reason
                   if getattr(completion, "choices", None) else "no choices")
         raise ValueError(f"Chat Completions gateway returned no verdict text (finish_reason={finish})")
-    return _json_object(content)
+    verdict = _json_object(content)
+    verdict["_usage"] = usage
+    return verdict
 
 
 def answer(case: dict[str, Any], *, live: bool = False, use_model: bool | None = None) -> dict[str, Any]:
